@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "nachoaz.git-status",
+  "name": "Git Status",
+  "version": "1.0.0",
+  "author": "nachoaz",
+  "license": "MIT",
+  "description": "Warns when any git repository under your watched folders has work pending to be synchronized: uncommitted changes, untracked files, or unpushed commits.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Git Status",
+    "description": "Turns red when any watched git repository has uncommitted changes or unpushed commits. The popup lists them; click one to open lazygit there.",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "watchDirs": "~/code",
+      "maxDepth": 4,
+      "refreshIntervalSec": 60
+    },
+    "schema": [
+      {
+        "key": "watchDirs",
+        "type": "string",
+        "label": "Watched folders",
+        "defaultValue": "~/code",
+        "description": "Comma-separated folders to scan for git repositories. ~ expands to your home directory."
+      },
+      {
+        "key": "maxDepth",
+        "type": "integer",
+        "label": "Search depth",
+        "min": 1,
+        "max": 8,
+        "step": 1,
+        "defaultValue": 4,
+        "description": "How many levels below each watched folder to look for .git directories."
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 30,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 60
+      }
+    ]
+  }
+}
