@@ -7,8 +7,9 @@ unpushed commits.
 
 The bar shows a single git glyph, in your theme's foreground when
 everything is clean and in the theme's urgent color when something is
-pending. The popup lists the repositories that need attention; clicking
-one opens lazygit there.
+pending. The popup lists the repositories that need attention — clicking
+one opens lazygit there — and the watched folders themselves, which you add
+and remove from inside the panel. There is no configuration file.
 
 ![preview](preview.png)
 
@@ -44,8 +45,13 @@ present on a stock Omarchy.
 
 ## Configuration
 
-Settings live in the widget's entry in `~/.config/omarchy/shell.json` and
-are editable from the bar's widget settings UI:
+Watched folders are managed from the panel itself: type a path into the
+field at the bottom to add one, click the `×` on a folder to stop watching
+it. Each folder shows how many repositories it holds and how many of them
+are pending, so a typo shows up as "does not exist" on its own row.
+
+Everything is stored in the widget's entry in `~/.config/omarchy/shell.json`
+and is also editable from the bar's widget settings UI:
 
 | Key                  | Default  | What it does                                                      |
 | -------------------- | -------- | ----------------------------------------------------------------- |
@@ -67,13 +73,17 @@ are editable from the bar's widget settings UI:
 | `Enter`      | Open lazygit for that repository   |
 | `r`          | Rescan                             |
 | `Esc`        | Close                              |
+| Type + `↵`   | Add a watched folder               |
+| `×`          | Stop watching that folder          |
 
 IPC, for scripts and keybinds:
 
 ```bash
 omarchy-shell nachoaz.git-status toggle
 omarchy-shell nachoaz.git-status refresh
-omarchy-shell nachoaz.git-status status   # -> "4 repos pending"
+omarchy-shell nachoaz.git-status status         # -> "4 repos pending"
+omarchy-shell nachoaz.git-status watch '~/work'
+omarchy-shell nachoaz.git-status unwatch '~/work'
 ```
 
 ## How it works
@@ -98,7 +108,9 @@ It prints one JSON object on stdout:
     { "name": "dotfiles", "path": "/home/me/code/dotfiles",
       "dir": "~/code", "issues": "uncommitted changes" }
   ],
-  "notes": []
+  "watched": [
+    { "path": "~/code", "state": "ok", "repos": 13, "pending": 1 }
+  ]
 }
 ```
 
@@ -108,7 +120,7 @@ exec at `core/git-status.sh 4 ~/code` and parse the JSON.
 
 `./core/git-status.test.sh` builds throwaway repositories for each branch of
 that decision — no remote, pushed without `-u`, ahead of upstream, untracked
-files — and asserts the verdict.
+files, a missing folder — and asserts the verdict and the per-folder counts.
 
 ## Notes
 

@@ -74,12 +74,21 @@ touch "$repo/scratch"
 check "untracked file plus ahead" "uncommitted changes, 1 unpushed commit(s)" "$(issues_for tracking)"
 rm -rf "$WORK/repos" "$WORK/remotes"
 
-# Folders that cannot be scanned are notes, not pending repos.
+# Folders that cannot be scanned are reported as watched folders in a
+# non-ok state, not as pending repos.
 mkdir -p "$WORK/repos"
-check "missing folder is a note" "$WORK/gone does not exist" \
-  "$("$SCRIPT" 3 "$WORK/gone" | jq -r '.notes[0]')"
-check "folder without repos is a note" "$WORK/repos has no git repos" \
-  "$("$SCRIPT" 3 "$WORK/repos" | jq -r '.notes[0]')"
+check "missing folder is reported missing" missing \
+  "$("$SCRIPT" 3 "$WORK/gone" | jq -r '.watched[0].state')"
+check "folder without repos is reported empty" empty \
+  "$("$SCRIPT" 3 "$WORK/repos" | jq -r '.watched[0].state')"
+
+# Per-folder counts are what the panel prints under each folder.
+repo=$(seed counted)
+touch "$repo/scratch"
+clean=$(seed clean-one)
+git -C "$clean" push -q origin main
+check "folder repo count" 2 "$("$SCRIPT" 3 "$WORK/repos" | jq -r '.watched[0].repos')"
+check "folder pending count" 1 "$("$SCRIPT" 3 "$WORK/repos" | jq -r '.watched[0].pending')"
 
 [ $failures -eq 0 ] || { echo "$failures check(s) failed"; exit 1; }
 echo "all checks passed"

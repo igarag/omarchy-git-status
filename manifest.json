@@ -12,7 +12,7 @@
   },
   "barWidget": {
     "displayName": "Git Status",
-    "description": "Turns red when any watched git repository has uncommitted changes or unpushed commits. The popup lists them; click one to open lazygit there.",
+    "description": "Turns red when any watched git repository has uncommitted changes or unpushed commits. The popup lists them and lets you add or remove watched folders inline; click a repository to open lazygit there.",
     "category": "Status",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -27,7 +27,7 @@
         "type": "string",
         "label": "Watched folders",
         "defaultValue": "~/code",
-        "description": "Comma-separated folders to scan for git repositories. ~ expands to your home directory."
+        "description": "Comma-separated folders to scan for git repositories. ~ expands to your home directory. Also editable from the panel itself."
       },
       {
         "key": "maxDepth",

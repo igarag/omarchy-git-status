@@ -18,8 +18,11 @@
 #     "scanned": 12,
 #     "pending": [{"name": "foo", "path": "/home/me/code/foo",
 #                  "dir": "~/code", "issues": "uncommitted changes"}],
-#     "notes": ["~/gone does not exist"]
+#     "watched": [{"path": "~/code", "state": "ok", "repos": 12, "pending": 1}]
 #   }
+#
+# A watched folder's state is "ok", "missing" (not a directory) or "empty" (no
+# repositories below it).
 #
 # Rendering (icons, colors, layout) belongs to the caller. Deps: bash, git, jq.
 
@@ -31,7 +34,7 @@ shift || true
 
 scanned=0
 pending_json="[]"
-notes_json="[]"
+watched_json="[]"
 
 add_pending() {
   pending_json=$(jq -c \
@@ -40,8 +43,11 @@ add_pending() {
     <<<"$pending_json")
 }
 
-add_note() {
-  notes_json=$(jq -c --arg note "$1" '. + [$note]' <<<"$notes_json")
+add_watched() {
+  watched_json=$(jq -c \
+    --arg path "$1" --arg state "$2" --argjson repos "$3" --argjson pending "$4" \
+    '. + [{path: $path, state: $state, repos: $repos, pending: $pending}]' \
+    <<<"$watched_json")
 }
 
 for watch_dir in "$@"; do
@@ -50,16 +56,18 @@ for watch_dir in "$@"; do
   display_dir="${watch_dir/#$HOME/\~}"
 
   if [ ! -d "$watch_dir" ]; then
-    add_note "$display_dir does not exist"
+    add_watched "$display_dir" missing 0 0
     continue
   fi
 
   mapfile -t git_dirs < <(find "$watch_dir" -maxdepth "$MAX_DEPTH" -type d -name .git -prune 2>/dev/null | sort)
 
   if [ ${#git_dirs[@]} -eq 0 ]; then
-    add_note "$display_dir has no git repos"
+    add_watched "$display_dir" empty 0 0
     continue
   fi
+
+  dir_pending=0
 
   for git_dir in "${git_dirs[@]}"; do
     repo="${git_dir%/.git}"
@@ -89,13 +97,16 @@ for watch_dir in "$@"; do
       # the first character of IFS -- so build the list explicitly.
       joined=$(printf '%s, ' "${issues[@]}")
       add_pending "${repo#$watch_dir/}" "$repo" "$display_dir" "${joined%, }"
+      dir_pending=$((dir_pending + 1))
     fi
   done
+
+  add_watched "$display_dir" ok "${#git_dirs[@]}" "$dir_pending"
 done
 
 jq -cn \
   --argjson pending "$pending_json" \
-  --argjson notes "$notes_json" \
+  --argjson watched "$watched_json" \
   --argjson scanned "$scanned" \
   '{state: (if ($pending | length) > 0 then "unsynced" else "synced" end),
-    scanned: $scanned, pending: $pending, notes: $notes}'
+    scanned: $scanned, pending: $pending, watched: $watched}'

@@ -28,7 +28,7 @@ Panel {
   readonly property int refreshIntervalSec: Math.max(30, Number(setting("refreshIntervalSec", 60)))
 
   property var pending: []
-  property var notes: []
+  property var watched: []
   property int scanned: 0
   property bool scanning: false
   property string lastError: ""
@@ -53,6 +53,34 @@ Panel {
     return decodeURIComponent(value)
   }
 
+  // Persist the watched folders into this widget's inline shell.json entry.
+  // Same round-trip the first-party panels use, so the bar's widget settings
+  // UI and this panel stay one source of truth instead of two.
+  function persistDirs(dirs) {
+    if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function") return
+    var entry = { id: moduleName }
+    for (var key in settings) if (key !== "id") entry[key] = settings[key]
+    entry.watchDirs = dirs.join(", ")
+    bar.shell.updateEntryInline(moduleName, entry)
+  }
+
+  function addDir(raw) {
+    var dir = String(raw || "").trim().replace(/\/+$/, "")
+    if (dir === "") return
+    var dirs = dirArgs()
+    if (dirs.indexOf(dir) !== -1) return
+    dirs.push(dir)
+    persistDirs(dirs)
+  }
+
+  function removeDir(dir) {
+    var dirs = dirArgs()
+    var at = dirs.indexOf(String(dir))
+    if (at === -1) return
+    dirs.splice(at, 1)
+    persistDirs(dirs)
+  }
+
   function dirArgs() {
     var parts = watchDirs.split(",")
     var out = []
@@ -60,21 +88,31 @@ Panel {
       var dir = parts[i].trim()
       if (dir !== "") out.push(dir)
     }
-    return out.length > 0 ? out : ["~/code"]
+    return out
   }
 
   function refresh() {
     if (scan.running) return
     scanning = true
-    scan.command = ["bash", scriptPath, String(maxDepth)].concat(dirArgs())
+    var dirs = dirArgs()
+    if (dirs.length === 0) {
+      pending = []
+      watched = []
+      scanned = 0
+      scanning = false
+      return
+    }
+    scan.command = ["bash", scriptPath, String(maxDepth)].concat(dirs)
     scan.running = true
   }
 
   // lazygit's -p opens a specific repository, so each row gets its own window
   // rather than stealing focus from a lazygit already open on another repo.
+  // execArgv over bar.run: the path reaches bash as a positional parameter, so
+  // a folder named with a space or a $(...) stays a literal path.
   function openRepo(repo) {
-    if (!repo || !bar) return
-    bar.run("omarchy-launch-tui lazygit -p " + bar.shellQuote(String(repo.path)))
+    if (!repo) return
+    Util.execArgv(["omarchy-launch-tui", "lazygit", "-p", String(repo.path)])
     close()
   }
 
@@ -95,6 +133,7 @@ Panel {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  onWatchDirsChanged: refresh()
   Component.onCompleted: refresh()
 
   Process {
@@ -105,7 +144,7 @@ Panel {
         try {
           var result = JSON.parse(text)
           root.pending = result.pending || []
-          root.notes = result.notes || []
+          root.watched = result.watched || []
           root.scanned = Number(result.scanned || 0)
           root.lastError = ""
         } catch (error) {
@@ -137,6 +176,8 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): string { root.refresh(); return "ok" }
     function status(): string { return root.summary }
+    function watch(dir: string): string { root.addDir(dir); return root.watchDirs }
+    function unwatch(dir: string): string { root.removeDir(dir); return root.watchDirs }
   }
 
   BarIconButton {
@@ -165,6 +206,10 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // Keys.BeforeItem means this catcher sees keys even when the add field
+      // has focus, so every letter typed into it would drive the cursor
+      // instead. Stand down while the field is being edited.
+      blocked: addField.activeFocus
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
@@ -235,7 +280,7 @@ Panel {
             spacing: Style.space(10)
 
             PanelSectionHeader {
-              text: root.unsynced ? "PENDING TO SYNC" : "WATCHING"
+              text: "PENDING TO SYNC"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -244,7 +289,9 @@ Panel {
               textFormat: Text.PlainText
               visible: !root.unsynced && root.lastError === ""
               width: parent.width
-              text: "Everything is committed and pushed."
+              text: root.watched.length === 0
+                ? "No folders watched yet. Add one below."
+                : "Everything is committed and pushed."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -270,29 +317,126 @@ Panel {
             }
           }
 
+          PanelSeparator { foreground: root.foreground }
+
           Column {
-            visible: root.notes.length > 0
+            id: folderSection
             width: parent.width
-            spacing: Style.space(4)
+            spacing: Style.space(8)
 
-            PanelSeparator { foreground: root.foreground }
+            PanelSectionHeader {
+              text: "WATCHED FOLDERS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
 
-            Repeater {
-              model: root.notes
-              Text {
-                required property var modelData
-                textFormat: Text.PlainText
-                width: parent.width
-                text: String(modelData)
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
+            Column {
+              width: parent.width
+              spacing: Style.space(2)
+
+              Repeater {
+                model: root.watched
+                FolderRow {
+                  required property var modelData
+                  width: folderSection.width
+                  folder: modelData
+                }
+              }
+            }
+
+            // Typing a path is the whole editor: no config file, no picker
+            // process. The folder's own row reports back whether it exists.
+            TextField {
+              id: addField
+              width: parent.width
+              foreground: root.foreground
+              placeholderText: "Add a folder, e.g. ~/work"
+              onAccepted: {
+                root.addDir(text)
+                text = ""
+              }
+              // Escape leaves the field rather than closing the panel, so a
+              // half-typed path can be abandoned without losing the popup.
+              Keys.onEscapePressed: {
+                text = ""
+                keyCatcher.forceActiveFocus()
+              }
+
+              // The key catcher holds focus for the whole panel, and a press on
+              // the field alone does not take it back, so the field stays deaf
+              // to typing. Claim focus on press and let the event fall through
+              // so the caret still lands where the click did.
+              MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton
+                onPressed: function(mouse) {
+                  addField.forceActiveFocus()
+                  mouse.accepted = false
+                }
               }
             }
           }
         }
       }
+    }
+  }
+
+  component FolderRow: Item {
+    id: folderRow
+    property var folder: null
+    readonly property string folderPath: folder ? String(folder.path) : ""
+    readonly property string folderState: folder ? String(folder.state) : "ok"
+    readonly property string meta: {
+      if (folderState === "missing") return "does not exist"
+      if (folderState === "empty") return "no git repos"
+      var repos = folder ? Number(folder.repos) : 0
+      var pending = folder ? Number(folder.pending) : 0
+      var count = repos + (repos === 1 ? " repo" : " repos")
+      return pending > 0 ? count + " · " + pending + " pending" : count + " · all synced"
+    }
+
+    implicitHeight: Math.max(folderLabels.implicitHeight, removeButton.implicitHeight)
+      + Style.space(4)
+
+    Column {
+      id: folderLabels
+      anchors.left: parent.left
+      anchors.right: removeButton.left
+      anchors.rightMargin: Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(1)
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: folderRow.folderPath
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: folderRow.meta
+        color: folderRow.folderState === "missing" ? root.urgent : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+      }
+    }
+
+    PanelActionButton {
+      id: removeButton
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      iconText: "\uf00d"
+      tooltipText: "Stop watching this folder"
+      foreground: root.foreground
+      hoverColor: root.urgent
+      fontFamily: root.fontFamily
+      onClicked: root.removeDir(folderRow.folderPath)
     }
   }
 
