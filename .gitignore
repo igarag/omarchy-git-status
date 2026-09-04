@@ -1,3 +1,6 @@
 *.bak
 *.bak.*
 .DS_Store
+
+# Screenshots of a live bar leak local repository names.
+preview.png

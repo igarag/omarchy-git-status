@@ -11,8 +11,6 @@ pending. The popup lists the repositories that need attention — clicking
 one opens lazygit there — and the watched folders themselves, which you add
 and remove from inside the panel. There is no configuration file.
 
-![preview](preview.png)
-
 ## Behavior
 
 A repository is considered "pending" if any of the following is true:
