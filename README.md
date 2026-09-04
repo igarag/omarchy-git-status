@@ -1,4 +1,4 @@
-# git-status-indicator
+# omarchy-git-status
 
 An [Omarchy](https://omarchy.org/) bar plugin that warns you when any git
 repository under a set of watched folders has work pending to be
@@ -26,14 +26,14 @@ A repository is considered "pending" if any of the following is true:
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/nachoaz/git-status-indicator.git --enable
+omarchy plugin add https://github.com/igarag/omarchy-git-status.git --enable
 ```
 
 Or, if you keep it in your dotfiles, symlink the checkout into the plugins
 directory and rescan:
 
 ```bash
-ln -sfn ~/code/git-status-indicator ~/.config/omarchy/plugins/nachoaz.git-status
+ln -sfn ~/code/omarchy-git-status ~/.config/omarchy/plugins/nachoaz.git-status
 omarchy-shell shell rescanPlugins
 omarchy plugin enable nachoaz.git-status right
 ```
