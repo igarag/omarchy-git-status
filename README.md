@@ -40,8 +40,10 @@ omarchy-shell shell rescanPlugins
 omarchy plugin enable nachoaz.git-status right
 ```
 
-Dependencies: `git`, `jq`, `find`, and `lazygit` for the row click — all
-present on a stock Omarchy.
+Dependencies: `git`, `jq`, `find`, coreutils (`sort`, `head`, `timeout`),
+and `lazygit` for the row click — all present on a stock Omarchy. They are
+resolved once from a pinned `PATH` (`/usr/bin:/bin`) and called by absolute
+path, so nothing earlier in your own `PATH` gets to stand in for them.
 
 ## Configuration
 
@@ -93,10 +95,15 @@ omarchy-shell nachoaz.git-status unwatch '~/work'
 repository — no network, no auth:
 
 ```bash
-git -C <repo> status --porcelain                # working tree
-git -C <repo> rev-list --count '@{u}..HEAD'     # commits ahead of upstream
-git -C <repo> branch -r --contains HEAD         # fallback when no upstream
+git -C <repo> --no-optional-locks -c core.fsmonitor= status --porcelain
+git -C <repo> --no-optional-locks -c core.fsmonitor= rev-list --count '@{u}..HEAD'
+git -C <repo> --no-optional-locks -c core.fsmonitor= branch -r --contains HEAD
 ```
+
+`--no-optional-locks` keeps the scan from writing into repositories it is
+only looking at; `core.fsmonitor=` declines to run the hook a scanned
+repository's own config asks for — a watched folder is not necessarily full
+of your own code. Only the first 4 KiB of any git invocation is read.
 
 It prints one JSON object on stdout:
 
@@ -114,13 +121,39 @@ It prints one JSON object on stdout:
 }
 ```
 
+### Limits
+
+`watchDirs` is yours to point anywhere, so every ceiling below is hard.
+Crossing one aborts the run and reports it — a half-finished scan that said
+"synced" would be a lie, and the panel would paint it green:
+
+```json
+{ "state": "error", "error": "too many repositories in total (limit 500)",
+  "scanned": 0, "pending": [], "watched": [] }
+```
+
+| Ceiling | Value |
+|---|---|
+| Watched folders per run   | 8               |
+| Repositories per folder   | 200             |
+| Repositories in total     | 500             |
+| `maxDepth`                | clamped to 1–8  |
+| Bytes read per git call   | 4 KiB           |
+| Emitted JSON              | 512 KiB         |
+| Wall clock for a whole scan | 20 s, and the panel wraps the script in `timeout -k 5s 25s` |
+
+The panel runs the script under `timeout`, which leads its own process
+group, so the deadline's `TERM`-then-`KILL` reaches the `find` and `git`
+children too rather than orphaning them.
+
 `Panel.qml` schedules that script and draws the result. The script is
 standalone, so it also works from any other status bar — point the bar's
 exec at `core/git-status.sh 4 ~/code` and parse the JSON.
 
 `./core/git-status.test.sh` builds throwaway repositories for each branch of
 that decision — no remote, pushed without `-u`, ahead of upstream, untracked
-files, a missing folder — and asserts the verdict and the per-folder counts.
+files, a missing folder — and asserts the verdict and the per-folder counts,
+plus that a hijacked `PATH` is ignored and that each ceiling is rejected.
 
 ## Notes
 

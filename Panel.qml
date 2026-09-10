@@ -27,6 +27,13 @@ Panel {
   readonly property int maxDepth: Number(setting("maxDepth", 4))
   readonly property int refreshIntervalSec: Math.max(30, Number(setting("refreshIntervalSec", 60)))
 
+  // Ceilings that mirror the ones in core/git-status.sh. The script rejects an
+  // oversized job; this side refuses to hand it one, and refuses to parse an
+  // oversized answer instead of buffering whatever arrives.
+  readonly property int maxWatchDirs: 8
+  readonly property int maxOutputBytes: 1048576
+  readonly property int scanTimeoutSec: 25
+
   property var pending: []
   property var watched: []
   property int scanned: 0
@@ -93,7 +100,6 @@ Panel {
 
   function refresh() {
     if (scan.running) return
-    scanning = true
     var dirs = dirArgs()
     if (dirs.length === 0) {
       pending = []
@@ -102,8 +108,22 @@ Panel {
       scanning = false
       return
     }
-    scan.command = ["bash", scriptPath, String(maxDepth)].concat(dirs)
+    if (dirs.length > maxWatchDirs) {
+      lastError = "too many watched folders (limit " + maxWatchDirs + ")"
+      return
+    }
+    scanning = true
+    // Absolute paths, not PATH lookups: this refreshes on a timer for the whole
+    // session, so an earlier writable PATH entry would otherwise get to run its
+    // own `bash` here every minute.
+    //
+    // timeout(1) makes itself the leader of a new process group and the script
+    // with its find/git children inherits it, so its TERM-then-KILL reaches the
+    // whole tree. Terminating the shell alone would leave them running.
+    scan.command = ["/usr/bin/timeout", "-k", "5s", scanTimeoutSec + "s",
+                    "/usr/bin/bash", scriptPath, String(maxDepth)].concat(dirs)
     scan.running = true
+    watchdog.restart()
   }
 
   // lazygit's -p opens a specific repository, so each row gets its own window
@@ -114,6 +134,16 @@ Panel {
     if (!repo) return
     Util.execArgv(["omarchy-launch-tui", "lazygit", "-p", String(repo.path)])
     close()
+  }
+
+  // TERM the group leader, then KILL the group it leads five seconds later, so
+  // no find or git outlives the scan that started it.
+  function abortScan(reason) {
+    if (!scan.running) return
+    lastError = reason
+    killer.pgid = scan.processId
+    scan.running = false
+    killer.restart()
   }
 
   function moveCursor(dx, dy) {
@@ -138,11 +168,35 @@ Panel {
 
   Process {
     id: scan
+    // The scan wants nothing from the session environment except the home
+    // directory the watch roots are written against. The rest of what it used
+    // to inherit was just so many ways to redirect the helpers it runs.
+    clearEnvironment: true
+    environment: ({ PATH: "/usr/bin:/bin", HOME: String(Quickshell.env("HOME") || "") })
     stdout: StdioCollector {
       waitForEnd: true
+      // waitForEnd holds the whole answer in memory and the collector has no cap
+      // of its own, so watch it grow and stop the producer on the way past the
+      // limit rather than after having swallowed whatever it sent.
+      onDataChanged: if (text.length > root.maxOutputBytes) root.abortScan("scan output too large")
       onStreamFinished: {
+        watchdog.stop()
+        killer.stop()
+        // waitForEnd buffers the whole answer before this runs, so the size of
+        // the answer is the producer's choice, not ours. Refuse it rather than
+        // hand a megabyte-plus string to JSON.parse.
+        if (text.length > root.maxOutputBytes) {
+          root.lastError = "scan output too large"
+          return
+        }
         try {
           var result = JSON.parse(text)
+          // The script reports a crossed ceiling instead of a partial scan:
+          // keep the last known list on screen and say why it is stale.
+          if (result.state === "error") {
+            root.lastError = String(result.error || "scan rejected")
+            return
+          }
           root.pending = result.pending || []
           root.watched = result.watched || []
           root.scanned = Number(result.scanned || 0)
@@ -155,7 +209,27 @@ Panel {
     }
     onExited: function(exitCode) {
       root.scanning = false
+      watchdog.stop()
+      killer.stop()
       if (exitCode !== 0 && root.lastError === "") root.lastError = "scan exited with code " + exitCode
+    }
+  }
+
+  // Belt and braces behind timeout(1)'s own deadline, for a job somehow still
+  // alive past it.
+  Timer {
+    id: watchdog
+    interval: (root.scanTimeoutSec + 10) * 1000
+    onTriggered: root.abortScan("scan timed out")
+  }
+
+  Timer {
+    id: killer
+    property int pgid: 0
+    interval: 5000
+    onTriggered: {
+      if (scan.running && pgid > 0) Util.execArgv(["/usr/bin/kill", "-9", "--", "-" + pgid])
+      pgid = 0
     }
   }
 

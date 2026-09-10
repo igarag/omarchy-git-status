@@ -90,5 +90,41 @@ git -C "$clean" push -q origin main
 check "folder repo count" 2 "$("$SCRIPT" 3 "$WORK/repos" | jq -r '.watched[0].repos')"
 check "folder pending count" 1 "$("$SCRIPT" 3 "$WORK/repos" | jq -r '.watched[0].pending')"
 
+# --- trusted environment -----------------------------------------------------
+# A writable directory ahead of the real one in PATH must not get to supply the
+# helpers: the script pins its own PATH and calls them by absolute path. This is
+# the finding the ceilings and the pinning were both added for.
+mkdir -p "$WORK/evil"
+printf '#!/bin/sh\ntouch "$WORK/pwned"\n' > "$WORK/evil/git"
+chmod +x "$WORK/evil/git"
+PATH="$WORK/evil:$PATH" WORK="$WORK" "$SCRIPT" 3 "$WORK/repos" >/dev/null 2>&1
+check "a hijacked PATH is ignored" absent \
+  "$([ -e "$WORK/pwned" ] && echo present || echo absent)"
+
+# --- ceilings ----------------------------------------------------------------
+# The watch roots come from user settings, so the caps are the only thing
+# between "~/" at depth 8 and a wedged panel. Crossing one must be reported as
+# an error, never as a short result the panel would paint green.
+error_for() { "$SCRIPT" "$@" | jq -r '.state + ": " + (.error // "")'; }
+
+mkdir -p "$WORK/many"
+check "too many watched folders is rejected" \
+  "error: too many watched folders (limit 8)" \
+  "$(error_for 3 "$WORK/many" "$WORK/many" "$WORK/many" "$WORK/many" \
+                 "$WORK/many" "$WORK/many" "$WORK/many" "$WORK/many" "$WORK/many")"
+
+# find(1) only matches on the directory name, so bare .git dirs are enough to
+# trip the cardinality cap -- it is checked before any repo is opened.
+for i in $(seq 201); do mkdir -p "$WORK/many/r$i/.git"; done
+check "too many repos under one folder is rejected" \
+  "error: too many repositories under one folder (limit 200)" \
+  "$(error_for 3 "$WORK/many")"
+rm -rf "$WORK/many"
+
+# maxDepth arrives as a string from the widget settings.
+mkdir -p "$WORK/plain"
+check "non-numeric depth falls back instead of erroring" synced \
+  "$("$SCRIPT" "; rm -rf /" "$WORK/plain" | jq -r '.state')"
+
 [ $failures -eq 0 ] || { echo "$failures check(s) failed"; exit 1; }
 echo "all checks passed"
