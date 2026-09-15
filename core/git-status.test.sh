@@ -101,6 +101,13 @@ PATH="$WORK/evil:$PATH" WORK="$WORK" "$SCRIPT" 3 "$WORK/repos" >/dev/null 2>&1
 check "a hijacked PATH is ignored" absent \
   "$([ -e "$WORK/pwned" ] && echo present || echo absent)"
 
+# Shape check, not a behaviour one: the traversal cap has to sit in FRONT of
+# sort(1), which cannot emit a single line until it has consumed -- and buffered
+# or spilled -- everything find produced. Swap the two and the ceiling below
+# still passes while the producer runs unbounded again.
+check "discovery is capped before it is sorted" present \
+  "$(grep -qF '"$HEAD" -n "$((MAX_REPOS_PER_DIR + 1))" | "$SORT"' "$SCRIPT" && echo present || echo absent)"
+
 # --- ceilings ----------------------------------------------------------------
 # The watch roots come from user settings, so the caps are the only thing
 # between "~/" at depth 8 and a wedged panel. Crossing one must be reported as

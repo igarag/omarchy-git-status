@@ -133,10 +133,15 @@ for watch_dir in "$@"; do
     continue
   fi
 
-  # One line past the limit is enough to know the limit was crossed.
+  # head(1) comes before sort(1), not after. sort cannot emit anything until it
+  # has read -- and buffered, or spilled to disk -- every path find produced, so
+  # a cap behind it is no cap at all: the traversal bound has to be on the
+  # producer. head closes the pipe on entry 201, which SIGPIPEs find mid-walk;
+  # sorting is then left to the 201 that survive. One line past the limit is all
+  # it takes to know the limit was crossed.
   mapfile -t git_dirs < <(
     "$FIND" "$watch_dir" -maxdepth "$MAX_DEPTH" -type d -name .git -prune 2>/dev/null \
-      | "$SORT" | "$HEAD" -n "$((MAX_REPOS_PER_DIR + 1))"
+      | "$HEAD" -n "$((MAX_REPOS_PER_DIR + 1))" | "$SORT"
   )
 
   [ ${#git_dirs[@]} -le "$MAX_REPOS_PER_DIR" ] \

@@ -136,12 +136,26 @@ Panel {
     close()
   }
 
-  // TERM the group leader, then KILL the group it leads five seconds later, so
-  // no find or git outlives the scan that started it.
+  // Abort the scan so that nothing it spawned outlives it: timeout(1) leads the
+  // process group, so its pid is the group's -- TERM the group now, KILL it five
+  // seconds later if anything is still standing.
+  //
+  // The pgid is held here rather than read back off the Process when the timer
+  // fires. `running` goes false as soon as termination is *requested* and
+  // `processId` empties with it. Nor does the leader's own exit mean anything
+  // here -- it is reaped well before this timer fires, and anything that ignored
+  // the TERM is orphaned into its group and outlives it. So the escalation owns
+  // the number and fires unconditionally.
+  //
+  // That is safe to do blind: the kernel will not hand a pid out again while it
+  // is still some group's id, so this either reaches our own stragglers or fails
+  // with ESRCH on an empty group. It can never land on an unrelated one.
   function abortScan(reason) {
-    if (!scan.running) return
+    var pgid = Number(scan.processId || 0)
+    if (pgid <= 0 || killer.pgid !== 0) return
     lastError = reason
-    killer.pgid = scan.processId
+    killer.pgid = pgid
+    Util.execArgv(["/usr/bin/kill", "-TERM", "--", "-" + pgid])
     scan.running = false
     killer.restart()
   }
@@ -181,7 +195,6 @@ Panel {
       onDataChanged: if (text.length > root.maxOutputBytes) root.abortScan("scan output too large")
       onStreamFinished: {
         watchdog.stop()
-        killer.stop()
         // waitForEnd buffers the whole answer before this runs, so the size of
         // the answer is the producer's choice, not ours. Refuse it rather than
         // hand a megabyte-plus string to JSON.parse.
@@ -210,7 +223,8 @@ Panel {
     onExited: function(exitCode) {
       root.scanning = false
       watchdog.stop()
-      killer.stop()
+      // The killer is deliberately left running: this fires when the *leader*
+      // exits, which is not the same as the group being empty.
       if (exitCode !== 0 && root.lastError === "") root.lastError = "scan exited with code " + exitCode
     }
   }
@@ -228,7 +242,7 @@ Panel {
     property int pgid: 0
     interval: 5000
     onTriggered: {
-      if (scan.running && pgid > 0) Util.execArgv(["/usr/bin/kill", "-9", "--", "-" + pgid])
+      if (pgid > 0) Util.execArgv(["/usr/bin/kill", "-KILL", "--", "-" + pgid])
       pgid = 0
     }
   }
