@@ -23,6 +23,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property string scriptPath: localPathFromUrl(Qt.resolvedUrl("core/git-status.sh"))
+  readonly property string supervisorPath: localPathFromUrl(Qt.resolvedUrl("core/supervise.sh"))
   readonly property string watchDirs: String(setting("watchDirs", "~/code"))
   readonly property int maxDepth: Number(setting("maxDepth", 4))
   readonly property int refreshIntervalSec: Math.max(30, Number(setting("refreshIntervalSec", 60)))
@@ -118,9 +119,11 @@ Panel {
     // own `bash` here every minute.
     //
     // timeout(1) makes itself the leader of a new process group and the script
-    // with its find/git children inherits it, so its TERM-then-KILL reaches the
-    // whole tree. Terminating the shell alone would leave them running.
-    scan.command = ["/usr/bin/timeout", "-k", "5s", scanTimeoutSec + "s",
+    // with its find/git children inherits it, so its TERM reaches the whole
+    // tree. supervise.sh sits between the two and turns that TERM into a KILL
+    // of the group five seconds later, from inside it -- see abortScan().
+    scan.command = ["/usr/bin/timeout", scanTimeoutSec + "s",
+                    "/usr/bin/bash", supervisorPath, "5",
                     "/usr/bin/bash", scriptPath, String(maxDepth)].concat(dirs)
     scan.running = true
     watchdog.restart()
@@ -136,28 +139,19 @@ Panel {
     close()
   }
 
-  // Abort the scan so that nothing it spawned outlives it: timeout(1) leads the
-  // process group, so its pid is the group's -- TERM the group now, KILL it five
-  // seconds later if anything is still standing.
+  // Abort the scan so that nothing it spawned outlives it. Stopping the Process
+  // sends TERM to timeout(1) -- by pid, to a child Quickshell has not reaped
+  // yet, so it cannot be anyone else -- and timeout forwards it to the group.
   //
-  // The pgid is held here rather than read back off the Process when the timer
-  // fires. `running` goes false as soon as termination is *requested* and
-  // `processId` empties with it. Nor does the leader's own exit mean anything
-  // here -- it is reaped well before this timer fires, and anything that ignored
-  // the TERM is orphaned into its group and outlives it. So the escalation owns
-  // the number and fires unconditionally.
-  //
-  // That is safe to do blind: the kernel will not hand a pid out again while it
-  // is still some group's id, so this either reaches our own stragglers or fails
-  // with ESRCH on an empty group. It can never land on an unrelated one.
+  // The KILL that follows is deliberately not sent from here. By the time it
+  // is due the group may have emptied, and a group id with no members is free
+  // for the kernel to hand out again, so a KILL by number could land on an
+  // unrelated process group of the user's. supervise.sh sends it instead, from
+  // inside the group, which keeps the id pinned for as long as that matters.
   function abortScan(reason) {
-    var pgid = Number(scan.processId || 0)
-    if (pgid <= 0 || killer.pgid !== 0) return
+    if (!scan.running) return
     lastError = reason
-    killer.pgid = pgid
-    Util.execArgv(["/usr/bin/kill", "-TERM", "--", "-" + pgid])
     scan.running = false
-    killer.restart()
   }
 
   function moveCursor(dx, dy) {
@@ -223,8 +217,6 @@ Panel {
     onExited: function(exitCode) {
       root.scanning = false
       watchdog.stop()
-      // The killer is deliberately left running: this fires when the *leader*
-      // exits, which is not the same as the group being empty.
       if (exitCode !== 0 && root.lastError === "") root.lastError = "scan exited with code " + exitCode
     }
   }
@@ -235,16 +227,6 @@ Panel {
     id: watchdog
     interval: (root.scanTimeoutSec + 10) * 1000
     onTriggered: root.abortScan("scan timed out")
-  }
-
-  Timer {
-    id: killer
-    property int pgid: 0
-    interval: 5000
-    onTriggered: {
-      if (pgid > 0) Util.execArgv(["/usr/bin/kill", "-KILL", "--", "-" + pgid])
-      pgid = 0
-    }
   }
 
   Timer {

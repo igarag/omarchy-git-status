@@ -133,5 +133,22 @@ mkdir -p "$WORK/plain"
 check "non-numeric depth falls back instead of erroring" synced \
   "$("$SCRIPT" "; rm -rf /" "$WORK/plain" | jq -r '.state')"
 
+# --- supervisor ---------------------------------------------------------------
+# A straggler that ignores TERM and outlives its script must still be KILLed,
+# by the supervisor from inside the group, whichever way the TERM arrives.
+SUPERVISE="$(dirname "$SCRIPT")/supervise.sh"
+straggler() { echo "(trap '' TERM; exec sleep 30) & echo \$! > '$WORK/straggler'; wait"; }
+alive() { kill -0 "$(cat "$WORK/straggler")" 2>/dev/null && echo alive || echo dead; }
+
+(timeout 1s bash "$SUPERVISE" 1 bash -c "$(straggler)"; :) 2>/dev/null
+check "a TERM-proof straggler dies after the deadline" dead "$(alive)"
+
+timeout 30s bash "$SUPERVISE" 1 bash -c "$(straggler)" &
+sleep 0.5; kill -TERM $!; wait $! 2>/dev/null
+check "a TERM-proof straggler dies after an abort" dead "$(alive)"
+
+check "a clean run keeps its exit code" 3 \
+  "$(timeout 5s bash "$SUPERVISE" 1 bash -c 'exit 3'; echo $?)"
+
 [ $failures -eq 0 ] || { echo "$failures check(s) failed"; exit 1; }
 echo "all checks passed"

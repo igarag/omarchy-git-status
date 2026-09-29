@@ -70,7 +70,7 @@ MAX_GIT_BYTES=4096      # bytes read from any single git invocation
 MAX_STRING=256          # characters kept from any name, path or issue list
 MAX_OUTPUT_BYTES=524288 # size of the JSON object we are willing to emit
 DEADLINE_SEC=20         # wall clock for the whole job; the caller also wraps
-                        # this script in `timeout`, which is what actually kills
+                        # this script in `timeout` and supervise.sh, which kill
                         # find/git if they wedge below the point of no return
 
 # The watch roots are stored with `~` in them, so there is nothing to scan

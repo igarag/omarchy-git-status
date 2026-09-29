@@ -140,11 +140,14 @@ Crossing one aborts the run and reports it — a half-finished scan that said
 | `maxDepth`                | clamped to 1–8  |
 | Bytes read per git call   | 4 KiB           |
 | Emitted JSON              | 512 KiB         |
-| Wall clock for a whole scan | 20 s, and the panel wraps the script in `timeout -k 5s 25s` |
+| Wall clock for a whole scan | 20 s, and the panel wraps the script in `timeout 25s` |
 
 The panel runs the script under `timeout`, which leads its own process
-group, so the deadline's `TERM`-then-`KILL` reaches the `find` and `git`
-children too rather than orphaning them.
+group, so the deadline's `TERM` reaches the `find` and `git` children too
+rather than orphaning them. `core/supervise.sh` sits inside that group and
+follows up with a `KILL` to it five seconds later; sending it from inside
+keeps the group id from being recycled onto an unrelated process group
+before it lands.
 
 `Panel.qml` schedules that script and draws the result. The script is
 standalone, so it also works from any other status bar — point the bar's
@@ -153,7 +156,8 @@ exec at `core/git-status.sh 4 ~/code` and parse the JSON.
 `./core/git-status.test.sh` builds throwaway repositories for each branch of
 that decision — no remote, pushed without `-u`, ahead of upstream, untracked
 files, a missing folder — and asserts the verdict and the per-folder counts,
-plus that a hijacked `PATH` is ignored and that each ceiling is rejected.
+plus that a hijacked `PATH` is ignored, that each ceiling is rejected, and
+that a straggler which ignores `TERM` is still killed after an abort.
 
 ## Notes
 
