@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "nachoaz.git-status",
   "name": "Git Status",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "nachoaz",
   "license": "MIT",
   "description": "Warns when any git repository under your watched folders has work pending to be synchronized: uncommitted changes, untracked files, or unpushed commits.",
