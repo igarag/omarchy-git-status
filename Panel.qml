@@ -27,6 +27,7 @@ Panel {
   readonly property string watchDirs: String(setting("watchDirs", "~/code"))
   readonly property int maxDepth: Number(setting("maxDepth", 4))
   readonly property int refreshIntervalSec: Math.max(30, Number(setting("refreshIntervalSec", 60)))
+  readonly property string homeDir: String(Quickshell.env("HOME") || "")
 
   // Ceilings that mirror the ones in core/git-status.sh. The script rejects an
   // oversized job; this side refuses to hand it one, and refuses to parse an
@@ -72,21 +73,47 @@ Panel {
     bar.shell.updateEntryInline(moduleName, entry)
   }
 
+  // The script shows every watched folder with $HOME collapsed back to `~`
+  // (git-status.sh's display_dir), so the row a removal click hands removeDir()
+  // rarely equals the string stored in shell.json. Both sides are mapped
+  // through canonDir() before being compared, and new entries are stored in
+  // the same ~ form the panel displays, so one shape round-trips.
+  function canonDir(dir) {
+    var value = String(dir || "").trim().replace(/\/+$/, "")
+    if (value === "" || homeDir === "") return value
+    if (value === "~") return homeDir
+    if (value.indexOf("~/") === 0) return homeDir + value.slice(1)
+    return value
+  }
+
+  function displayDir(dir) {
+    var value = canonDir(dir)
+    if (value === "" || homeDir === "") return value
+    if (value === homeDir) return "~"
+    if (value.indexOf(homeDir + "/") === 0) return "~" + value.slice(homeDir.length)
+    return value
+  }
+
   function addDir(raw) {
-    var dir = String(raw || "").trim().replace(/\/+$/, "")
+    var dir = displayDir(raw)
     if (dir === "") return
     var dirs = dirArgs()
-    if (dirs.indexOf(dir) !== -1) return
+    for (var i = 0; i < dirs.length; i++) {
+      if (canonDir(dirs[i]) === canonDir(dir)) return
+    }
     dirs.push(dir)
     persistDirs(dirs)
   }
 
   function removeDir(dir) {
+    var key = canonDir(dir)
     var dirs = dirArgs()
-    var at = dirs.indexOf(String(dir))
-    if (at === -1) return
-    dirs.splice(at, 1)
-    persistDirs(dirs)
+    for (var i = 0; i < dirs.length; i++) {
+      if (canonDir(dirs[i]) !== key) continue
+      dirs.splice(i, 1)
+      persistDirs(dirs)
+      return
+    }
   }
 
   function dirArgs() {
